@@ -1,0 +1,198 @@
+# Utiliza HashiCorp Configuration Language (HCL)
+# Infrastructure as Code (IaC) => definir data center
+# Syntax:
+
+# <BLOCK TYPE> "<BLOCK LABEL (DOCS)>" "<BLOCK LABEL>" {
+#   <IDENTIFIER> = <EXPRESSION>
+# }
+
+
+#!================================================================================
+
+
+#
+# PASSOS PARA INICIAR UM PROJETO
+#
+
+
+# Entrar em registry.terraform.io para iniciar o projeto
+# cloud provider -> digital ocean
+
+terraform {
+  required_providers {
+    digitalocean = {
+      source = "digitalocean/digitalocean"
+      version = "~> 2.0"
+    }
+  }
+}
+
+
+# Configure the DigitalOcean Provider
+provider "digitalocean" {
+    # Gerar um token na Digital Ocean por API -> Generate Token
+  token = "dop_v1_2e91b896a2d61f46143eef44e2f79558a7a8c351e9b3f870d2d5fc065707c9ee"
+}
+
+#=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+# Executar comando de inicialização do terraform:
+$ terraform init
+
+# Inicializará a base de um projeto terraform para as especificações acima
+
+
+#!================================================================================
+
+
+#
+# PASSOS PARA CRIAR UM DROPLET
+#
+
+
+$ Droplet:
+$ DigitalOcean Droplets are Linux-based virtual machines (VMs) that run on
+$ top of virtualized hardware. Each Droplet you create is a new server you
+$ can use, either standalone or as part of a larger, cloud-based infrastructure.
+
+# Docs do registry o resource desejado: droplet => digitalocean_droplet (Resources)
+
+# Example Usage: Create a new Web Droplet in the nyc2 region
+resource "digitalocean_droplet" "jenkins" {
+  image  = "ubuntu-22-04-x64"
+  name   = "jenkins"
+  region = "nyc1"
+  size   = "s-2vcpu-2gb"
+  ssh_keys = [data.digitalocean_ssh_key.JornadaDevOps.id]
+}
+
+#=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+# Para aplicar o projeto no cloud provider:
+$ terraform apply
+
+# Criará o recurso no cloud provider
+# Criará o arquivo terraform.tfstate => estado da infraestrutura no cloudp
+# Sempre que o estado muda => cria terrafor.tfstate.backup do anterior
+
+#=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+# Alterações em region, por exemplo, requerem um replacement: destrói o anterior
+# e cria um novo => gera um downtime na app => deve ser planejado
+
+#=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+# Ao criar um droplet => especificar SSH key para poder acessar remotamente
+# Já foi criada e salva no cloudp:
+
+$ 'ssh-keygen -t rsa -b 2048'
+#? Salvar em ~/.ssh/terraform
+# Adicionar a Settings -> Security
+
+# Preciso vincular um elemento de infraestrutura já criado a um resource
+# = Datasource:
+
+# Docs do registry: ssh => digitalocean_ssh_key (Data Sources)
+
+# Example Usage: Get the ssh key:
+data "digitalocean_ssh_key" "JornadaDevOps" {
+  name = "JornadaDevOps" #nome exato da ssh key
+}
+
+# Add 'ssh_keys = [data.digitalocean_ssh_key.<name>.id]' ao resource
+# <name> = label do block
+
+$ terraform apply
+
+# A partir de então, pode-se fazer o acesso por:
+
+$ ssh -i <caminho do ssh salvo> root@<ip do droplet>
+#? Exemplo: ssh -i ~/.ssh/terraform root@204.48.23.21
+
+
+#!================================================================================
+
+
+#
+# PASSOS PARA CRIAR UM CLUSTER
+#
+
+
+# Docs do registry: kubernetes => digitalocean_kubernetes_cluster (Resources)
+
+# Example Usage: Basic Example
+resource "digitalocean_kubernetes_cluster" "k8s" {
+  name   = "k8s"
+  region = "nyc1"
+  # Grab the latest version slug from `doctl kubernetes options versions`
+  # or access https://docs.digitalocean.com/products/kubernetes/details/changelog/
+  version = "1.25.4-do.0"
+
+  node_pool {
+    name       = "default"
+    size       = "s-2vcpu-2gb"
+    node_count = 2
+  }
+}
+
+#=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+#? Comandos úteis:
+#? 'terraform fmt' para formatar o main.tf => manter padrão
+#? 'terraform plan' mostra o plano de exec (o que aparece antes de confirmar após 'terraform apply')
+
+# Otimizar o main.tf com variables:
+# Referenciar por 'var.<nome>' nos elementos
+# Settar variáveis por terraform.tfvars
+
+# default = valor padrão mesmo (caso não seja settada -> .tfvars, etc.)
+# Se .tfvars estiver diferente de default, é priorizado
+variable "region" {
+  default = "nyc1"
+}
+
+# Token sem default => pode mudar
+variable "do_token" {
+    default = ""
+}
+
+# Proteger dado sensível => colocar em .tfvars
+
+#! Sempre antes de aplicar, é uma boa prática formatar!
+
+#=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+Criar output para o IP do droplet para não ter que acessar o painel do cloudp
+
+# Docs do registry: digitalocean_droplet => ip address é um atributo que o droplet gera
+# Referencia pelo bloco completo: tipo.nome.atributo
+output "jenkins_ip" {
+    value = digitalocean_droplet.jenkins.ipv4_address
+}
+
+Passará a logar no terminal o output após 'terraform apply'
+Para entrar no droplet: ssh -i ~/.ssh/terraform root@<ip>
+
+#=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+Gerar config kube e aplicar:
+
+Pesquisar o provider hashicorp/local
+Docs do registry: local_file (Resources)
+
+# Example Usage => Add atributo gerado por k8s (Kubernetes)
+resource "local_file" "foo" {
+  content  = digitalocean_kubernetes_cluster.k8s.kube_config.0.raw_config
+  filename = "kube_config.yaml"
+}
+
+Passa a utilizar um novo provider => deve executar 'terraform init'
+Para aplicar o config no k8s:
+
+$ cp ./kube_config.yaml ~/.kube/config
+
+Passa a controlar como cluster... kubectl get nodes/all/pods...
+
+#!!! PARA DESLIGAR => NÃO SER COBRADO PELO USO (pay as you go)
+
+$ terraform destroy
